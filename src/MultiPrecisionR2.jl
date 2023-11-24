@@ -14,6 +14,7 @@ abstract type AbstractMPNLPModel{T, S} <: AbstractNLPModel{T, S} end
 
 include("MPCounters.jl")
 include("MPNLPModels.jl")
+include("VectorStorage.jl")
 include("utils.jl")
 
 """
