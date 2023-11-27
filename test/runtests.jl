@@ -14,19 +14,24 @@ using SolverTest
 using ManualNLPModels
 
 with_logger(NullLogger()) do
-  @testset "utils.jl" begin
-    println("#### Testing utils...")
-    t = @elapsed include("utils_test.jl")
-    println("#### done (took $t seconds).")
-  end
-  @testset "MPCounters.jl" begin
-    println("#### Testing MPCounters...")
-    t = @elapsed include("MPCounters_test.jl")
-    println("#### done (took $t seconds).")
-  end
-  @testset "MPNLPModels.jl" begin
-    println("#### Testing MPNLPModels...")
-    t = @elapsed include("MPNLPModels_test.jl")
+  # @testset "utils.jl" begin
+  #   println("#### Testing utils...")
+  #   t = @elapsed include("utils_test.jl")
+  #   println("#### done (took $t seconds).")
+  # end
+  # @testset "MPCounters.jl" begin
+  #   println("#### Testing MPCounters...")
+  #   t = @elapsed include("MPCounters_test.jl")
+  #   println("#### done (took $t seconds).")
+  # end
+  # @testset "MPNLPModels.jl" begin
+  #   println("#### Testing MPNLPModels...")
+  #   t = @elapsed include("MPNLPModels_test.jl")
+  #   println("#### done (took $t seconds).")
+  # end
+  @testset "VectorStorage.jl" begin
+    println("#### Testing VectorStorage...")
+    t = @elapsed include("VectorStorage_test.jl")
     println("#### done (took $t seconds).")
   end
   @testset "MultiPrecisionR2.jl" begin

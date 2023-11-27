@@ -37,7 +37,6 @@ Stores FP formats index in `FPMPNLPModel.FPList` of obj, grad, model reduction a
 """
 mutable struct MPR2Precisions
   πx::Int
-  πx_final::Int
   πnx::Int
   πs::Int
   πns::Int
@@ -53,7 +52,7 @@ end
 end
 
 Base.copy(π::MPR2Precisions) =
-  MPR2Precisions(π.πx, π.πx_final, π.πnx, π.πs, π.πns, π.πc, π.πf, π.πf⁺, π.πg, π.πΔ)
+  MPR2Precisions(π.πx, π.πnx, π.πs, π.πns, π.πc, π.πf, π.πf⁺, π.πg, π.πΔ)
 
 """
     MPR2Params(LPFormat::DataType, HPFormat::DataType)
@@ -131,6 +130,7 @@ Solver structure containing all the variables necessary to MRP2.
 - `g::T` : gradient
 - `s::T` : step 
 - `c::T` : candidate
+- `strg::AbstractVectorStorage`: storage structure for solution (e.g. quantized vector)
 - `π::MPR2Precisions` : FP format indices (precision) structure
 - `p::MPR2Params` : MPR2 parameters
 - `x_norm::H` : norm of `x`
@@ -147,6 +147,7 @@ Solver structure containing all the variables necessary to MRP2.
 - `ωf⁺::H` : objective evaluation error at `c`, |f(c) - fl(f(c))| <= `ωf⁺`
 - `ωg::H` : gradient evaluation error at `c`, ||∇f(c) - fl(∇f(c))||₂ <= `ωg`||fl(∇f(c))||₂
 - `ωfBound::H` : error tolerance on objective evaluation
+- `ωstrg::H` : relative error caused by candidate storage in a `AbstractVectorStorage`, ||̃c - c|| ≤ ωstrg ||c|| with ̃c the reconstructed vector from storage structure.
 - `σ::H` : regularization parameter
 - `πmax::Int` : number of FP formats available for evaluations
 - `init::Bool` : initialized with `true`, set to `false` when entering main loop
@@ -157,6 +158,7 @@ mutable struct MPR2Solver{T <: Tuple, H <: AbstractFloat} <: AbstractOptimizatio
   g::T
   s::T
   c::T
+  strg::AbstractVectorStorage
   π::MPR2Precisions
   p::MPR2Params
   x_norm::H
@@ -172,6 +174,7 @@ mutable struct MPR2Solver{T <: Tuple, H <: AbstractFloat} <: AbstractOptimizatio
   ωf::H
   ωf⁺::H
   ωg::H
+  ωstrg::H
   ωfBound::H
   σ::H
   πmax::Int
@@ -193,9 +196,10 @@ function MPR2Solver(MPnlp::M) where {S, H, B, D, M <: FPMPNLPModel{H, B, D, S}}
     g,
     s,
     c,
+    EmptyVectorStorage(),
     π,
     par,
-    [H(0) for _ = 1:(fieldcount(MPR2Solver) - 9)]...,
+    [H(0) for _ = 1:(fieldcount(MPR2Solver) - 10)]...,
     πmax,
     true,
     (n, u) -> max(abs(1 - sqrt(1 - MPnlp.γfunc(n + 2, u))), abs(1 - sqrt(1 + MPnlp.γfunc(n, u)))), # error bound on euclidean norm
@@ -221,7 +225,7 @@ Keyword agruments:
 - `σmin::T = sqrt(T(MPnlp.EpsList[end]))` : minimal value for regularization parameter. Value must be representable in any of the floating point formats of MPnlp. 
 - `run_free = false` : if true, let MPR2 run when maximum precision levels have been reach but numerical stability is not ensured (avoid early stop because of lack of precision)
 - `verbose::Int=0` : display iteration information if > 0
-- `sol_format::DataType = MPnlp.FPList[end]` : User-specified FP format of the returned solution  
+- `sol_storage_struct::AbstractVectorStorage` : Instanciated storage structure for the solution
 - `e::E` : user defined structure, used as argument for `compute_f_at_x!`, `compute_f_at_c!` `compute_g!` and `recompute_g!` callback functions.
 - `compute_f_at_x!` : callback function to select precision and compute objective value and error bound at the current point. Allows to reevaluate the objective at x if more precision is needed.
 - `compute_f_at_c!` : callback function to select precision and compute objective value and error bound at candidate.
@@ -275,7 +279,7 @@ function SolverCore.solve!(
   σmin::H = H(sqrt(MPnlp.FPList[end](MPnlp.EpsList[end]))),
   run_free = false,
   verbose::Int = 0,
-  sol_format::DataType = MPnlp.FPList[end],
+  sol_storage_struct::AbstractVectorStorage = EmptyVectorStorage(),
   e::E = nothing,
   compute_f_at_x! = compute_f_at_x_default!,
   compute_f_at_c! = compute_f_at_c_default!,
@@ -289,10 +293,8 @@ function SolverCore.solve!(
   start_time = time()
   SolverCore.set_time!(stats, 0.0)
 
-  # set solution final type
-  sol_format ∈ MPnlp.FPList || error("Final format of solution provided ($sol_format) must be in MPnlp.FPList ($(MPnlp.FPList)).")
-  solver.π.πx_final = findfirst(x -> x==sol_format,MPnlp.FPList)
-  solver.π.πx = solver.π.πx_final
+  # set vector storage 
+  solver.strg = sol_storage_struct
   # check for ill initialized parameters
   CheckMPR2ParamConditions(par)
   solver.p = par
@@ -381,7 +383,12 @@ function SolverCore.solve!(
       ((stats.status = :exception); (stats.status_reliable = true))
     computeModelDecrease!(solver.g, solver.s, solver, FP, solver.π) ||
       ((stats.status = :exception); (stats.status_reliable = true))
-
+    solver.ωstrg = H(store_n_update_candidate!(solver.c,solver.strg,solver.π))
+    if CheckUnderOverflowCandidate(solver.c[solver.π.πc], solver.x[solver.π.πx], solver.s[solver.π.πs])
+      @warn "Candidate retrieved from storage structure over/underflow"
+      stats.status = :exception
+    end
+    
     g_recomp, g_succ = recompute_g!(MPnlp, solver, stats, e)
     if !g_succ && !run_free
       if stats.status != :small_step
@@ -481,8 +488,8 @@ function SolverCore.solve!(
 
   stats.solution = solver.x[end] # has to set stats.solution as max prec format for consistency
   #SolverCore.set_solution!(stats, solver.x[end])
-  if sol_format != FP[end]
-    @info "Solution contained in retruned GenericExecutionStats is of format $(FP[end]) but can be safely casted into required $sol_format solution format (no rounding error will occur)."
+  if !(typeof(sol_storage_struct) <: EmptyVectorStorage) 
+    @info "Solution is up to date in `sol_storage_struct` given as Keyword argument"
   end
   return stats
 end
@@ -616,7 +623,7 @@ function computeCandidate!(
   x::T,
   s::T,
   FP::Vector{DataType},
-  π::MPR2Precisions,
+  π::MPR2Precisions
 ) where {T <: Tuple}
   πmax = length(FP)
   c[π.πc] .= FP[π.πc].(x[max(π.πc, π.πx)] .+ s[max(π.πc, π.πs)])
@@ -625,15 +632,23 @@ function computeCandidate!(
       @warn "Candidate over/underflow with maximum precision FP format ($(FP[πmax]))"
       return false
     end
-    if π.πc > π.πx_final #not enough precision to avoid underflow
-      @warn "Candidate over/underflow with required solution FP format ($(FP[π.πx_final]))"
-      return false
-    end
     π.πc += 1
     c[π.πc] .= FP[π.πc].(x[max(π.πc, π.πx)] .+ s[max(π.πc, π.πs)])
   end
   umpt!(c, c[π.πc])
   return true
+end
+
+function store_n_update_candidate!(c::T,cs::AbstractVectorStorage,π::MPR2Precisions) where {T <: Tuple}
+  ωstrg = update_rel_err!(cs,c[π.πc])
+  ctype = eltype(c[π.πc])
+  c[π.πc] .= get_vector(cs;type = ctype)
+  umpt!(c,c[π.πc])
+  return ωstrg
+end
+
+function store_n_update_candidate!(c::T,cs::EmptyVectorStorage,π::MPR2Precisions) where {T <: Tuple}
+  return 0.
 end
 
 """
@@ -690,7 +705,7 @@ Compute μ value for gradient error ωg, ratio ϕ = ||x||/||s|| and rounding err
 function computeMu(m::FPMPNLPModel, solver::MPR2Solver{T, H}; π = solver.π) where {T, H}
   n = m.meta.nvar
   αfunc(n::Int, u::H) = 1 / (1 - m.γfunc(n, u))
-  u = π.πc >= π.πs ? m.UList[π.πc] : m.UList[π.πc] + m.UList[π.πs] + m.UList[π.πc] * m.UList[π.πs]
+  u = π.πc >= π.πs ? m.UList[π.πc] : (1+m.UList[π.πc])*(1+m.UList[π.πs])-1
   return (
     αfunc(n + 1, m.UList[π.πΔ]) * H(solver.ωg) * (m.UList[π.πc] + solver.ϕ * u + 1) +
     αfunc(n + 1, m.UList[π.πΔ]) * u * (solver.ϕ + 1) +
@@ -720,7 +735,7 @@ function recomputeMuPrecSelection!(π::MPR2Precisions, πr::MPR2Precisions, πma
     # Priority #3 strategy: increase πc
   elseif π.πs < πmax
     πr.πs = π.πs + 1
-  elseif π.πc < π.πx_final # πmax
+  elseif π.πc < πmax # πmax
     πr.πc = π.πc + 1
     # Priority #4 strategy: recompute gradient
   elseif π.πg < πmax
@@ -834,7 +849,6 @@ Default strategy for selecting FP format of candidate for the next evaluation. U
 """
 function selectPic_default!(solver::MPR2Solver)
   solver.π.πc = max(1, solver.π.πf⁺ - 1)
-  solver.π.πc = min(solver.π.πc,solver.π.πx_final) # doesn't allow storage in greater precision FP format than specified solution output format
 end
 
 ####### Default callback function for objective and gradient evaluation #########
