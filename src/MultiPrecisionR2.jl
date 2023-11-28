@@ -383,12 +383,7 @@ function SolverCore.solve!(
       ((stats.status = :exception); (stats.status_reliable = true))
     computeModelDecrease!(solver.g, solver.s, solver, FP, solver.π) ||
       ((stats.status = :exception); (stats.status_reliable = true))
-    solver.ωstrg = H(store_n_update_candidate!(solver.c,solver.strg,solver.π))
-    if CheckUnderOverflowCandidate(solver.c[solver.π.πc], solver.x[solver.π.πx], solver.s[solver.π.πs])
-      @warn "Candidate retrieved from storage structure over/underflow"
-      stats.status = :exception
-    end
-    
+    solver.ωstrg = H(store_n_update_candidate!(solver,stats))
     g_recomp, g_succ = recompute_g!(MPnlp, solver, stats, e)
     if !g_succ && !run_free
       if stats.status != :small_step
@@ -404,6 +399,7 @@ function SolverCore.solve!(
         ((stats.status = :exception); (stats.status_reliable = true))
       computeModelDecrease!(solver.g, solver.s, solver, FP, solver.π) ||
         ((stats.status = :exception); (stats.status_reliable = true))
+      solver.ωstrg = store_n_update_candidate!(solver,stats)
     end
     stats.dual_feas = solver.g_norm
     stats.dual_residual_reliable = true
@@ -485,7 +481,7 @@ function SolverCore.solve!(
     end
     done = stats.status != :unknown
   end
-
+  
   stats.solution = solver.x[end] # has to set stats.solution as max prec format for consistency
   #SolverCore.set_solution!(stats, solver.x[end])
   if !(typeof(sol_storage_struct) <: EmptyVectorStorage) 
@@ -639,16 +635,24 @@ function computeCandidate!(
   return true
 end
 
-function store_n_update_candidate!(c::T,cs::AbstractVectorStorage,π::MPR2Precisions) where {T <: Tuple}
-  ωstrg = update_rel_err!(cs,c[π.πc])
-  ctype = eltype(c[π.πc])
-  c[π.πc] .= get_vector(cs;type = ctype)
-  umpt!(c,c[π.πc])
-  return ωstrg
-end
+"""
+  store_n_update_candidate!(solver,stats)
 
-function store_n_update_candidate!(c::T,cs::EmptyVectorStorage,π::MPR2Precisions) where {T <: Tuple}
-  return 0.
+Store the candidate in the vector storage structure `cs` and update the candidate with the reconstructed vector.
+"""
+function store_n_update_candidate!(solver::MPR2Solver{T,H},stats::GenericExecutionStats) where {H, T <: Tuple}
+  if typeof(solver.strg) <: EmptyVectorStorage
+    return H(0)
+  end
+  ωstrg = update_rel_err!(solver.strg,solver.c[solver.π.πc])
+  ctype = eltype(solver.c[solver.π.πc])
+  solver.c[solver.π.πc] .= get_vector(solver.strg;type = ctype)
+  umpt!(solver.c,solver.c[solver.π.πc])
+  if CheckUnderOverflowCandidate(solver.c[solver.π.πc], solver.x[solver.π.πx], solver.s[solver.π.πs])
+    @warn "Candidate retrieved from storage structure over/underflow"
+    stats.status = :exception
+  end
+  return H(ωstrg)
 end
 
 """
@@ -789,10 +793,22 @@ function recomputeMu!(
   if solver.π.πs != πr.πs
     computeStep!(solver.s, solver.g, solver.σ, m.FPList, πr) ||
       ((stats.status = :exception); (stats.status_reliable = true))
+    computeCandidate!(solver.c, solver.x, solver.s, m.FPList, πr) ||
+    ((stats.status = :exception); (stats.status_reliable = true))
+    solver.ωstrg = H(store_n_update_candidate!(solver,stats))
+    if CheckUnderOverflowCandidate(solver.c[solver.π.πc], solver.x[solver.π.πx], solver.s[solver.π.πs])
+      @warn "Candidate retrieved from storage structure over/underflow"
+      stats.status = :exception
+    end
   end
   if solver.π.πc != πr.πc
     computeCandidate!(solver.c, solver.x, solver.s, m.FPList, πr) ||
       ((stats.status = :exception); (stats.status_reliable = true))
+    solver.ωstrg = H(store_n_update_candidate!(solver,stats))
+    if CheckUnderOverflowCandidate(solver.c[solver.π.πc], solver.x[solver.π.πx], solver.s[solver.π.πs])
+      @warn "Candidate retrieved from storage structure over/underflow"
+      stats.status = :exception
+    end
   end
   if solver.π.πg != πr.πg
     solver.ωg = graderrmp!(m, solver.x[πr.πg], solver.g[πr.πg])
@@ -845,7 +861,7 @@ end
 """
     selectPic_default!(π::MPR2Precisions)
 
-Default strategy for selecting FP format of candidate for the next evaluation. Updates `solver.π.πf⁺`.
+Default strategy for selecting FP format of candidate for the next evaluation. Updates `solver.π.πc`.
 """
 function selectPic_default!(solver::MPR2Solver)
   solver.π.πc = max(1, solver.π.πf⁺ - 1)

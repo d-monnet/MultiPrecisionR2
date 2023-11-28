@@ -27,12 +27,12 @@ struct EmptyVectorStorage <: AbstractVectorStorage end
 
 # QVector-based implementation
 
-mutable struct QVectorStorage{T <: Vector} <:AbstractVectorStorage
+mutable struct QVectorStorage <:AbstractVectorStorage
   q::AbstractQVector
 end
 
 function QVectorStorage(dim::Int; Type = Float64, backend = ScaledBackend())
-  v = Vector{Type}(undef,dim)
+  v = ones(Type,dim)
   q = quantize(v,backend)
   return QVectorStorage(q)
 end
@@ -54,8 +54,8 @@ function update!(qvs::QVectorStorage,x::Vector)
 end
 
 function update_rel_err!(qvs::QVectorStorage,x::Vector)
-  quantize!(qvs,x)
-  return norm(vector(qsv) .- x)/norm(x)
+  quantize!(qvs.q,x)
+  return norm(get_vector(qvs) .- x)/norm(x)
 end
 
 
