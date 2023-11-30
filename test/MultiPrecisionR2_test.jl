@@ -596,15 +596,14 @@ end
     end
   end
   @testset "Storage structure: QVectorStorage" begin
-    FPFormats = [Float32,Float64]
+    FPFormats = [Float16,Float32,Float64]
     omega = Float64.([sqrt(eps(t)) for t in FPFormats])
     omega[end] = 0.0
-    o_type = Float16
     for nlp in problem_set
       strg = QVectorStorage(nlp.meta.nvar)
       mpnlp = FPMPNLPModel(nlp, FPFormats; ωfRelErr = omega, ωgRelErr = omega)
       stats = MPR2(mpnlp, max_iter = 1000000, max_time = 60.0,sol_storage_struct = strg)
-      @test stats.solution == get_vector(strg)
+      @test stats.solution ≈ get_vector(strg)
     end
   end
 end

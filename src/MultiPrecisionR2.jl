@@ -130,7 +130,8 @@ Solver structure containing all the variables necessary to MRP2.
 - `g::T` : gradient
 - `s::T` : step 
 - `c::T` : candidate
-- `strg::AbstractVectorStorage`: storage structure for solution (e.g. quantized vector)
+- `xstrg::AbstractVectorStorage`: storage structure for `x` (e.g. quantized vector)
+- `cstrg::AbstractVectorStorage`: storage structure for `c` (e.g. quantized vector)
 - `π::MPR2Precisions` : FP format indices (precision) structure
 - `p::MPR2Params` : MPR2 parameters
 - `x_norm::H` : norm of `x`
@@ -158,7 +159,8 @@ mutable struct MPR2Solver{T <: Tuple, H <: AbstractFloat} <: AbstractOptimizatio
   g::T
   s::T
   c::T
-  strg::AbstractVectorStorage
+  xstrg::AbstractVectorStorage
+  cstrg::AbstractVectorStorage
   π::MPR2Precisions
   p::MPR2Params
   x_norm::H
@@ -197,9 +199,10 @@ function MPR2Solver(MPnlp::M) where {S, H, B, D, M <: FPMPNLPModel{H, B, D, S}}
     s,
     c,
     EmptyVectorStorage(),
+    EmptyVectorStorage(),
     π,
     par,
-    [H(0) for _ = 1:(fieldcount(MPR2Solver) - 10)]...,
+    [H(0) for _ = 1:(fieldcount(MPR2Solver) - 11)]...,
     πmax,
     true,
     (n, u) -> max(abs(1 - sqrt(1 - MPnlp.γfunc(n + 2, u))), abs(1 - sqrt(1 + MPnlp.γfunc(n, u)))), # error bound on euclidean norm
@@ -294,7 +297,8 @@ function SolverCore.solve!(
   SolverCore.set_time!(stats, 0.0)
 
   # set vector storage 
-  solver.strg = sol_storage_struct
+  solver.xstrg = sol_storage_struct
+  solver.cstrg = MultiPrecisionR2.copy(solver.xstrg)
   # check for ill initialized parameters
   CheckMPR2ParamConditions(par)
   solver.p = par
@@ -384,6 +388,7 @@ function SolverCore.solve!(
     computeModelDecrease!(solver.g, solver.s, solver, FP, solver.π) ||
       ((stats.status = :exception); (stats.status_reliable = true))
     solver.ωstrg = H(store_n_update_candidate!(solver,stats))
+
     g_recomp, g_succ = recompute_g!(MPnlp, solver, stats, e)
     if !g_succ && !run_free
       if stats.status != :small_step
@@ -401,6 +406,7 @@ function SolverCore.solve!(
         ((stats.status = :exception); (stats.status_reliable = true))
       solver.ωstrg = store_n_update_candidate!(solver,stats)
     end
+    
     stats.dual_feas = solver.g_norm
     stats.dual_residual_reliable = true
     #SolverCore.set_dual_residual!(stats, solver.g_norm)
@@ -440,6 +446,7 @@ function SolverCore.solve!(
 
       solver.g_norm = H(norm(solver.g[solver.π.πg]))
       umpt!(solver.x, solver.c[solver.π.πc])
+      MultiPrecisionR2.copy!(solver.xstrg,solver.cstrg)
       solver.f = solver.f⁺
       stats.objective = solver.f⁺
       stats.objective_reliable = true
@@ -485,7 +492,7 @@ function SolverCore.solve!(
   stats.solution = solver.x[end] # has to set stats.solution as max prec format for consistency
   #SolverCore.set_solution!(stats, solver.x[end])
   if !(typeof(sol_storage_struct) <: EmptyVectorStorage) 
-    @info "Solution is up to date in `sol_storage_struct` given as Keyword argument"
+    @info "Solution is up to date in `sol_storage_struct` given as Keyword argument, can be retrieve with `get_vector` and casted into $(FP[solver.π.πc])."
   end
   return stats
 end
@@ -641,12 +648,12 @@ end
 Store the candidate in the vector storage structure `cs` and update the candidate with the reconstructed vector.
 """
 function store_n_update_candidate!(solver::MPR2Solver{T,H},stats::GenericExecutionStats) where {H, T <: Tuple}
-  if typeof(solver.strg) <: EmptyVectorStorage
+  if typeof(solver.cstrg) <: EmptyVectorStorage
     return H(0)
   end
-  ωstrg = update_rel_err!(solver.strg,solver.c[solver.π.πc])
+  ωstrg = update_rel_err!(solver.cstrg,solver.c[solver.π.πc])
   ctype = eltype(solver.c[solver.π.πc])
-  solver.c[solver.π.πc] .= get_vector(solver.strg;type = ctype)
+  solver.c[solver.π.πc] .= get_vector(solver.cstrg;type = ctype)
   umpt!(solver.c,solver.c[solver.π.πc])
   if CheckUnderOverflowCandidate(solver.c[solver.π.πc], solver.x[solver.π.πx], solver.s[solver.π.πs])
     @warn "Candidate retrieved from storage structure over/underflow"
