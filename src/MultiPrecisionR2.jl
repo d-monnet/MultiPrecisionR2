@@ -372,6 +372,8 @@ function SolverCore.solve!(
     )
   end
 
+  callback()
+
   done = stats.status != :unknown
   solver.init = false
   #main loop
