@@ -582,4 +582,30 @@ end
       @test stats.solution == o_type.(stats.solution)
     end
   end
+
+  @testset "Callback" begin
+    FP = [Float16,Float32,Float64]
+    f(x) = (x[1] - 1)^2 + 4 * (x[2] - x[1]^2)^2
+    MPnlp = FPMPNLPModel(f, [-1.2; 1.0],FP)
+    function cb(MPnlp, solver, stats)
+      x = solver.x
+      if stats.iter == 8
+        stats.status = :user
+      end
+    end
+    stats = with_logger(NullLogger()) do
+      MPR2(MPnlp, callback = cb)
+    end
+    @test stats.iter == 9
+    
+    function cb(mpnlp, solver, stats)
+      if stats.iter == 4
+        @test solver.σ > 0.0
+        stats.status = :user
+      end
+    end
+    stats = with_logger(NullLogger()) do
+      MPR2(MPnlp, callback = cb)
+    end
+  end
 end

@@ -372,7 +372,7 @@ function SolverCore.solve!(
     )
   end
   
-  callback(solver,MPnlp,stats)
+  callback(MPnlp,solver,stats)
   
   done = stats.status != :unknown
   solver.init = false
@@ -481,7 +481,7 @@ function SolverCore.solve!(
       )
     end
     done = stats.status != :unknown
-    callback(solver,MPnlp,stats)
+    callback(MPnlp,solver,stats)
   end
 
   stats.solution = solver.x[end] # has to set stats.solution as max prec format for consistency
