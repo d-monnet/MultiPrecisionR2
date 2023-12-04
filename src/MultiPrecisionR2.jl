@@ -281,7 +281,7 @@ function SolverCore.solve!(
   compute_g! = compute_g_default!,
   recompute_g! = recompute_g_default!,
   selectPic! = selectPic_default!,
-  callback = () -> nothing
+  callback = (args...) -> nothing
 ) where {H, T, E}
   unconstrained(MPnlp) || error("MPR2 should only be called on unconstrained problems.")
   SolverCore.reset!(stats)
@@ -371,7 +371,9 @@ function SolverCore.solve!(
       ),
     )
   end
-
+  
+  callback(MPnlp,solver,stats)
+  
   done = stats.status != :unknown
   solver.init = false
   #main loop
@@ -479,7 +481,7 @@ function SolverCore.solve!(
       )
     end
     done = stats.status != :unknown
-    callback()
+    callback(MPnlp,solver,stats)
   end
 
   stats.solution = solver.x[end] # has to set stats.solution as max prec format for consistency
