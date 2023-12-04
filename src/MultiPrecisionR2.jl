@@ -377,6 +377,7 @@ function SolverCore.solve!(
   done = stats.status != :unknown
   solver.init = false
   #main loop
+  println("modif")
   while (!done)
     solver.π.πs = solver.π.πg
     computeStep!(solver.s, solver.g, solver.σ, FP, solver.π) ||
@@ -518,7 +519,7 @@ Check if candidate `c` over/underflow.
 
 function CheckUnderOverflowCandidate(c::AbstractVector, x::AbstractVector, s::AbstractVector)
   of = findfirst(x -> isinf(x), c) !== nothing
-  uf = (x .== c) != (s .== 0)
+  uf = (x == s)
   return of || uf
 end
 
