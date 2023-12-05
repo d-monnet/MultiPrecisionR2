@@ -68,8 +68,6 @@ model =
 
 nlp = FluxNLPModel(model, train_loader, test_loader; loss_f = loss)
 
-callback = (nlp, solver, stats) -> FluxNLPModels.minibatch_next_train!(nlp)
-
 #MultiPrecisionR2
 om = FP[end].(eps.(FP))
 om[end] = 0.
@@ -102,7 +100,20 @@ function compute_f_at_x_nn!(m,solver,stats,e)
   end
   return true
 end
-stats = MPR2(mpmodel,verbose=1,compute_f_at_x! = compute_f_at_x_nn!,callback = callback) # run the algorithm
+
+function compute_g_nn!(m,solver,stats,e)
+  if solver.init == true # first grad eval at x before main loop
+    solver.π.πg = solver.π.πx
+    solver.ωg, solver.π.πg = gradReachPrec!(m, solver.x, solver.g, m.OFList[end], π = solver.π.πg)
+  else
+    FluxNLPModels.minibatch_next_train!(m.Model)
+    solver.π.πg = solver.π.πc # default strategy
+    solver.ωg, solver.π.πg = gradReachPrec!(m, solver.c, solver.g, m.OFList[end], π = solver.π.πg)
+  end
+  return true
+end
+
+stats = MPR2(mpmodel,verbose=1,compute_f_at_x! = compute_f_at_x_nn!,compute_g! = compute_g_nn!,max_time = 600.) # run the algorithm
 
 # ## Report on train and test
 train_acc = FluxNLPModels.accuracy(nlp; data_loader = train_loader)
