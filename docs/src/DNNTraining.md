@@ -18,7 +18,9 @@ const loss = logitcrossentropy
 # To download and load the MNIST dataset from MLDataset,
 # follow these steps:
 
-function getdata(; T = Float32) #T for types
+FP = [Float16,Float32, Float64] # define floating point formats used by the algorithm for objective and gradient evaluation
+
+function getdata(; T = FP[1]) #T for types
   ENV["DATADEPS_ALWAYS_ACCEPT"] = "true"
 
   # Loading Dataset
@@ -66,16 +68,43 @@ model =
 
 nlp = FluxNLPModel(model, train_loader, test_loader; loss_f = loss)
 
-# R2
-# callback = (nlp, solver, stats) -> FluxNLPModels.minibatch_next_train!(nlp)
-# solver_stats = JSOSolvers.R2(nlp; callback = callback)
-
-# ## Report on train and test
-# train_acc = FluxNLPModels.accuracy(nlp; data_loader = train_loader)
-# test_acc = FluxNLPModels.accuracy(nlp) #on the test data
+callback = (nlp, solver, stats) -> FluxNLPModels.minibatch_next_train!(nlp)
 
 #MultiPrecisionR2
-FP = [Float32, Float64] # define floating point formats used by the algorithm for objective and gradient evaluation
-mpmodel = FPMPNLPModel(nlp,FP); # instanciate a Floating Point Multi Precision NLPModel (FPMPNLPModel)
-stat = MPR2(mpmodel) # run the algorithm
+om = FP[end].(eps.(FP))
+om[end] = 0.
+γfunc(n,u) = 0.0
+mpmodel = FPMPNLPModel(nlp,FP,ωfRelErr = om,ωgRelErr = om,γfunc = γfunc ); # instanciate a Floating Point Multi Precision NLPModel (FPMPNLPModel)
+
+function compute_f_at_x_nn!(m,solver,stats,e)
+  if solver.init == true # first objective eval before main loop, no error bound needed
+      solver.f, solver.ωf, solver.π.πf = objReachPrec(m, solver.x, m.OFList[end], π = solver.π.πf)
+  else
+    ωfBound = solver.p.η₀ * solver.ΔT
+    solver.f, solver.ωf, solver.π.πf = objReachPrec(m, solver.x, ωfBound, π = solver.π.πf)
+    if solver.ωf > ωfBound
+      if solver.π.πf == solver.πmax
+        @warn "Objective evaluation error at x too big to ensure convergence"
+        return false
+      end
+      solver.π.πf += 1 # default strategy
+      solver.f, solver.ωf, solver.π.πf = objReachPrec(m, solver.x, ωfBound, π = solver.π.πf)
+      if isinf(solver.f) || isinf(solver.ωf)
+        @warn "Objective evaluation or error overflow at x"
+        stats.status = :exception
+        return false
+      end
+      if solver.ωf > ωfBound
+        @warn "Objective evaluation error at x too big to ensure convergence"
+        return false
+      end
+    end
+  end
+  return true
+end
+stats = MPR2(mpmodel,verbose=1,compute_f_at_x! = compute_f_at_x_nn!,callback = callback) # run the algorithm
+
+# ## Report on train and test
+train_acc = FluxNLPModels.accuracy(nlp; data_loader = train_loader)
+test_acc = FluxNLPModels.accuracy(nlp) #on the test data
 ```

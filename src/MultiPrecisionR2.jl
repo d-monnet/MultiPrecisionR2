@@ -372,12 +372,11 @@ function SolverCore.solve!(
     )
   end
   
-  callback(MPnlp,solver,stats)
+  callback(MPnlp.Model,solver,stats)
   
   done = stats.status != :unknown
   solver.init = false
   #main loop
-  println("modif")
   while (!done)
     solver.π.πs = solver.π.πg
     computeStep!(solver.s, solver.g, solver.σ, FP, solver.π) ||
@@ -482,7 +481,7 @@ function SolverCore.solve!(
       )
     end
     done = stats.status != :unknown
-    callback(MPnlp,solver,stats)
+    callback(MPnlp.Model,solver,stats)
   end
 
   stats.solution = solver.x[end] # has to set stats.solution as max prec format for consistency
@@ -519,7 +518,7 @@ Check if candidate `c` over/underflow.
 
 function CheckUnderOverflowCandidate(c::AbstractVector, x::AbstractVector, s::AbstractVector)
   of = findfirst(x -> isinf(x), c) !== nothing
-  uf = (x == s)
+  uf = (c == x)
   return of || uf
 end
 
