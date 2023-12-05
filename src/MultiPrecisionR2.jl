@@ -228,7 +228,7 @@ Keyword agruments:
 - `σmin::T = sqrt(T(MPnlp.EpsList[end]))` : minimal value for regularization parameter. Value must be representable in any of the floating point formats of MPnlp. 
 - `run_free = false` : if true, let MPR2 run when maximum precision levels have been reach but numerical stability is not ensured (avoid early stop because of lack of precision)
 - `verbose::Int=0` : display iteration information if > 0
-- `sol_storage_struct::AbstractVectorStorage` : Instanciated storage structure for the solution
+- `sol_storage_struct::AbstractVectorStorage = EmptyVectorStorage()` : Instanciated storage structure for the solution, no storage is used by default
 - `e::E` : user defined structure, used as argument for `compute_f_at_x!`, `compute_f_at_c!` `compute_g!` and `recompute_g!` callback functions.
 - `compute_f_at_x!` : callback function to select precision and compute objective value and error bound at the current point. Allows to reevaluate the objective at x if more precision is needed.
 - `compute_f_at_c!` : callback function to select precision and compute objective value and error bound at candidate.
@@ -523,7 +523,7 @@ Check if candidate `c` over/underflow.
 
 function CheckUnderOverflowCandidate(c::AbstractVector, x::AbstractVector, s::AbstractVector)
   of = findfirst(x -> isinf(x), c) !== nothing
-  uf = (x .== c) != (s .== 0)
+  uf = (x == c)
   return of || uf
 end
 
@@ -652,6 +652,7 @@ function store_n_update_candidate!(solver::MPR2Solver{T,H},stats::GenericExecuti
     return H(0)
   end
   ωstrg = update_rel_err!(solver.cstrg,solver.c[solver.π.πc])
+  @show ωstrg
   ctype = eltype(solver.c[solver.π.πc])
   solver.c[solver.π.πc] .= get_vector(solver.cstrg;type = ctype)
   umpt!(solver.c,solver.c[solver.π.πc])
