@@ -15,6 +15,7 @@ abstract type AbstractMPNLPModel{T, S} <: AbstractNLPModel{T, S} end
 include("MPCounters.jl")
 include("MPNLPModels.jl")
 include("VectorStorage.jl")
+include("QLevelsModel.jl")
 include("utils.jl")
 
 """
@@ -422,6 +423,7 @@ function SolverCore.solve!(
       stats.status = :exception
       stats.status_reliable = true
     end
+
     solver.ρ = (H(solver.f) - H(solver.f⁺)) / H(solver.ΔT)
 
     if solver.ρ ≥ η₂
@@ -430,6 +432,7 @@ function SolverCore.solve!(
     if solver.ρ < η₁
       solver.σ = solver.σ * γ₂
     end
+
 
     if solver.ρ ≥ η₁
       if !compute_g!(MPnlp, solver, stats, e) && !run_free # stop because gradient related error too big 
@@ -651,16 +654,15 @@ function store_n_update_candidate!(solver::MPR2Solver{T,H},stats::GenericExecuti
   if typeof(solver.cstrg) <: EmptyVectorStorage
     return H(0)
   end
-  ωstrg = update_rel_err!(solver.cstrg,solver.c[solver.π.πc])
-  @show ωstrg
+  update!(solver.cstrg,solver.c[solver.π.πc])
   ctype = eltype(solver.c[solver.π.πc])
-  solver.c[solver.π.πc] .= get_vector(solver.cstrg;type = ctype)
-  umpt!(solver.c,solver.c[solver.π.πc])
-  if CheckUnderOverflowCandidate(solver.c[solver.π.πc], solver.x[solver.π.πx], solver.s[solver.π.πs])
-    @warn "Candidate retrieved from storage structure over/underflow"
-    stats.status = :exception
+  v = get_vector(solver.cstrg;type = ctype)
+  ωstrg = norm(v .- solver.c[solver.π.πc])/norm(solver.s[solver.π.πs])
+  if !CheckUnderOverflowCandidate(get_vector(solver.cstrg;type = ctype), solver.x[solver.π.πx], solver.s[solver.π.πs])
+    umpt!(solver.c,v)
+    return H(ωstrg)
   end
-  return H(ωstrg)
+  return H(0.)
 end
 
 """
@@ -718,9 +720,11 @@ function computeMu(m::FPMPNLPModel, solver::MPR2Solver{T, H}; π = solver.π) wh
   n = m.meta.nvar
   αfunc(n::Int, u::H) = 1 / (1 - m.γfunc(n, u))
   u = π.πc >= π.πs ? m.UList[π.πc] : (1+m.UList[π.πc])*(1+m.UList[π.πs])-1
+  λ = u*(1+solver.ϕ)
+  e = λ + solver.ωstrg + λ*solver.ωstrg
   return (
-    αfunc(n + 1, m.UList[π.πΔ]) * H(solver.ωg) * (m.UList[π.πc] + solver.ϕ * u + 1) +
-    αfunc(n + 1, m.UList[π.πΔ]) * u * (solver.ϕ + 1) +
+    αfunc(n + 1, m.UList[π.πΔ]) * H(solver.ωg) * (1+e) +
+    αfunc(n + 1, m.UList[π.πΔ]) * e +
     m.UList[π.πg] +
     m.γfunc(n + 2, m.UList[π.πΔ]) * αfunc(n + 1, m.UList[π.πΔ])
   ) / (1 - m.UList[π.πs])

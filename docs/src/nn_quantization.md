@@ -54,7 +54,7 @@ end
 train_loader, test_loader = create_batch()
 
 ## Construct Nural Network model
-device = cpu # or gpu
+device =  cpu
 model =
   Chain(
     Conv((5, 5), 1 => 6, relu),
@@ -113,10 +113,46 @@ function compute_g_nn!(m,solver,stats,e)
   end
   return true
 end
-strg = QVectorStorage(mpmodel.meta.nvar,backend = LevelsBackend(),nbits = 6)
-stats = MPR2(mpmodel,verbose=1,sol_storage_struct = strg,compute_f_at_x! = compute_f_at_x_nn!,compute_g! = compute_g_nn!,max_time = 600.) # run the algorithm
+
+function compute_g_qnn!(m,solver,stats,e)
+  if solver.init == true # first grad eval at x before main loop
+    solver.π.πg = solver.π.πx
+    solver.ωg, solver.π.πg = gradReachPrec!(m, solver.x, solver.g, m.OFList[end], π = solver.π.πg)
+  else
+    FluxNLPModels.minibatch_next_train!(m.Model.m)
+    solver.π.πg = solver.π.πc # default strategy
+    solver.ωg, solver.π.πg = gradReachPrec!(m, solver.c, solver.g, m.OFList[end], π = solver.π.πg)
+  end
+  return true
+end
+
+params = MPR2Params(0.01,0.05,0.7,0.1,FP[1](0.5),FP[1](2))
+strg = QVectorStorage(mpmodel.meta.nvar,backend = ScaledBackend(),nbits = 8)
+stats = MPR2(mpmodel,verbose=1,sol_storage_struct = strg, compute_f_at_x! = compute_f_at_x_nn!,compute_g! = compute_g_nn!,max_time = 120.,run_free = true) # run the algorithm
 
 # ## Report on train and test
+train_acc = FluxNLPModels.accuracy(nlp; data_loader = train_loader)
+test_acc = FluxNLPModels.accuracy(nlp) #on the test data
+
+
+## level optim 
+nbits = 2
+q = quantize(stats.solution,LevelsBackend(),nbits=nbits)
+xq = dequantize(q)
+
+obj(nlp,xq)
+# after quantization acc
+train_acc = FluxNLPModels.accuracy(nlp; data_loader = train_loader)
+test_acc = FluxNLPModels.accuracy(nlp) #on the test data
+
+qnlp = QLevelsModel(nlp;nbits = nbits)
+qnlp.q.q .= q.q
+qnlp.q.levels .= q.levels
+qnlp.meta.x0 .= q.levels
+obj(qnlp,q.levels)
+mpqnlp = FPMPNLPModel(qnlp,[Float32],γfunc = γfunc,ωfRelErr = [0.],ωgRelErr = [0.])
+stats_lvl = MPR2(mpqnlp,verbose=1, compute_f_at_x! = compute_f_at_x_nn!,compute_g! = compute_g_qnn!,max_time = 600.,max_iter=1000) 
+obj(nlp,dequantize(qnlp.q))
 train_acc = FluxNLPModels.accuracy(nlp; data_loader = train_loader)
 test_acc = FluxNLPModels.accuracy(nlp) #on the test data
 ```

@@ -9,7 +9,7 @@ export AbstractVectorStorage,
   get_vector,
   set_vector,
   update!,
-  update_rel_err!,
+  update_norm_err!,
   copy,
   copy!
 
@@ -37,10 +37,10 @@ Update `strg` so that it stores vector `x`.
 function update!(strg::AbstractVectorStorage, v::Vector) end
 
 """
-  update_rel_err!(strg,x)
-Update `strg` so that it stores vector `x`, returns an upper bound on ||`x`-`get_vector(strg)`||/||`x`||.
+  update_norm_err!(strg,x)
+Update `strg` so that it stores vector `x`, returns an upper bound on ||`x`-`get_vector(strg)`||.
 """
-function update_rel_err!(strg::AbstractVectorStorage,x::Vector) end
+function update_norm_err!(strg::AbstractVectorStorage,x::Vector) end
 
 """
   copy(strg)
@@ -94,9 +94,9 @@ function update!(qvs::QVectorStorage,x::Vector)
   quantize!(qvs.q,x)
 end
 
-function update_rel_err!(qvs::QVectorStorage,x::Vector)
+function update_norm_err!(qvs::QVectorStorage,x::Vector)
   quantize!(qvs.q,x)
-  return norm(get_vector(qvs) .- x)/norm(x)
+  return norm(get_vector(qvs) .- x)
 end
 
 function copy(qvs::QVectorStorage)
@@ -125,7 +125,7 @@ function update!(gvs::GenericFPVectorStorage,x::Vector{F}) where {F <: AbstractF
   gvs.v .= x
 end
 
-function update_rel_err!(gvs::GenericFPVectorStorage{T},x::Vector{F}) where {T, F <: AbstractFloat}
+function update_norm_err!(gvs::GenericFPVectorStorage{T},x::Vector{F}) where {T, F <: AbstractFloat}
   gvs.v .= x
   if eps(T)> eps(F)
     return eps(T)
